@@ -49,27 +49,41 @@ Script Kiwi provides a platform for executing deterministic Python scripts with 
 
 ## Project Structure
 
+**Script Kiwi core:**
 ```
 script-kiwi/
-├── script_kiwi/
+├── script_kiwi/            # Core MCP server
 │   ├── api/                # Supabase + external APIs
 │   ├── tools/              # 6 core MCP tools
 │   ├── utils/              # Shared utilities
 │   └── server.py           # MCP server entry point
-├── tests/
-├── docs/
-├── .ai/                    # Project space
-│   └── scripts/            # Scripts organized by category
+├── tests/                  # Test suite
+├── docs/                   # Documentation
+├── migrations/             # Database migrations
+└── pyproject.toml          # Package configuration
+```
+
+**Script storage (created by users):**
+```
+User projects create their own script spaces:
+
+project/
+├── .ai/
+│   └── scripts/            # Project-local scripts (optional)
 │       ├── scraping/
 │       ├── enrichment/
 │       ├── extraction/
-│       ├── validation/
-│       ├── maintenance/
-│       ├── utility/
-│       └── lib/            # Domain-specific utility libraries
-└── ~/.script-kiwi/         # User space (created at runtime)
-    └── scripts/            # Same structure as .ai/scripts/
+│       └── lib/            # Project-specific utility libraries
+
+~/.script-kiwi/
+└── scripts/                # User space (auto-created)
+    ├── scraping/           # Downloaded/shared scripts
+    ├── enrichment/
+    ├── extraction/
+    └── lib/                # Shared utility libraries
 ```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed storage tier information.
 
 ## Tools
 

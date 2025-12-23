@@ -12,40 +12,53 @@ Script Kiwi is an MCP server for executing Python scripts with a 3-tier storage 
 Scripts are resolved in priority order:
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  1. PROJECT SPACE (highest priority)                                │
-│     Location: <project>/.ai/scripts/                                │
-│     Purpose: Project-specific scripts, local edits/overrides        │
-│     Requires: project_path parameter when MCP CWD ≠ project dir     │
-├─────────────────────────────────────────────────────────────────────┤
-│  2. USER SPACE                                                      │
-│     Location: ~/.script-kiwi/scripts/                               │
-│     Purpose: Downloaded scripts, shared libs, runtime environment   │
-│     Always accessible (uses $HOME)                                  │
-├─────────────────────────────────────────────────────────────────────┤
-│  3. REGISTRY (lowest priority)                                      │
-│     Location: Supabase (remote)                                     │
-│     Purpose: Shared scripts, versioning, discovery                  │
-│     Requires: Network + Supabase credentials                        │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│  1. PROJECT SPACE (highest priority)                                     │
+│     Location: <project>/.ai/scripts/                                     │
+│     Purpose: Project-specific scripts, local edits/overrides             │
+│     Optional: Users create this folder to customize scripts per project  │
+│     Requires: project_path parameter when MCP CWD ≠ project dir         │
+├──────────────────────────────────────────────────────────────────────────┤
+│  2. USER SPACE                                                           │
+│     Location: ~/.script-kiwi/scripts/                                    │
+│     Purpose: Downloaded registry scripts, shared libraries               │
+│     Auto-created: Script Kiwi creates this at first use                 │
+│     Always accessible (uses $HOME)                                       │
+├──────────────────────────────────────────────────────────────────────────┤
+│  3. REGISTRY (lowest priority)                                           │
+│     Location: Supabase (remote)                                          │
+│     Purpose: Shared scripts, versioning, discovery                       │
+│     Requires: Network + Supabase credentials                             │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
+
+**Key Point:** The `.ai/` folder is optional and user-created. Project space is only used if you:
+- Have project-specific scripts
+- Want to override registry scripts locally
+- Need to edit and test scripts before publishing
+
 
 ### Directory Structure
 
-**Project Space** (`.ai/scripts/`):
+**Project Space** (`.ai/scripts/`) - Optional, created by users:
 ```
 my-project/
-└── .ai/
-    └── scripts/
+└── .ai/                    # Hidden folder, created when you need project-local scripts
+    └── scripts/            # Create this if you want to store scripts locally
         ├── scraping/
         │   ├── __init__.py
-        │   └── my_scraper.py
+        │   └── my_scraper.py        # Project-specific script
         ├── extraction/
-        │   └── extract_youtube_transcript.py
+        │   └── extract_youtube_transcript.py  # Edited/overridden version
         └── lib/
             ├── __init__.py
-            └── my_utils.py          # Project-specific overrides
+            └── my_utils.py          # Project-specific utility library
 ```
+
+**You don't need `.ai/` unless you:**
+- Have scripts that are specific to this project
+- Want to modify a registry script locally before publishing
+- Need project-specific utility libraries
 
 **User Space** (`~/.script-kiwi/`):
 ```
