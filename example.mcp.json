@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "script-kiwi": {
+      "command": "python",
+      "args": ["-m", "script_kiwi.server"],
+      "cwd": "/home/leo/projects/script-kiwi",
+      "env": {
+        "LOG_LEVEL": "INFO"
+      }
+    }
+  }
+}
+

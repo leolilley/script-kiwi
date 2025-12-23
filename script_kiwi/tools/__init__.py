@@ -1,0 +1,1 @@
+"""Script Kiwi MCP package."""

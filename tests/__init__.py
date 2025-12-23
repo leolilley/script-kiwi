@@ -1,0 +1,2 @@
+"""Script Kiwi MCP tests."""
+
