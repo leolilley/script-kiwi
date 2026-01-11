@@ -70,17 +70,25 @@ User projects create their own script spaces:
 project/
 ├── .ai/
 │   └── scripts/            # Project-local scripts (optional)
+│       ├── .venv/          # Project venv (auto-created, add to .gitignore)
 │       ├── scraping/
 │       ├── enrichment/
 │       ├── extraction/
 │       └── lib/            # Project-specific utility libraries
 
 ~/.script-kiwi/
+├── .venv/                  # User venv (auto-created)
 └── scripts/                # User space (auto-created)
     ├── scraping/           # Downloaded/shared scripts
     ├── enrichment/
     ├── extraction/
     └── lib/                # Shared utility libraries
+```
+
+**Recommended .gitignore entries:**
+```gitignore
+# Script Kiwi venv (auto-created for script dependencies)
+.ai/scripts/.venv/
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed storage tier information.
@@ -105,9 +113,29 @@ Get guidance on workflows, examples, and how to use Script Kiwi. Use when you're
 ### remove
 Delete a script from local storage (project/user) or registry. Use `dry_run=true` first to preview. Checks for dependencies before removal.
 
+## Environment Isolation
+
+Script Kiwi uses **isolated virtual environments** for script execution to avoid polluting the MCP server's Python and to provide project-level dependency isolation:
+
+| Scenario | Venv Location | Use Case |
+|----------|---------------|----------|
+| `project_path` provided | `.ai/scripts/.venv/` | Project-specific deps, isolated per project |
+| No `project_path` | `~/.script-kiwi/.venv/` | User-level default environment |
+
+**How it works:**
+- Venvs are created **lazily** on first script run
+- Dependencies are installed **into the venv**, not the MCP server's Python
+- Scripts run via the **venv's Python**, ensuring they see installed packages
+- `lib/` imports still work via `PYTHONPATH` (unchanged from before)
+
+**Benefits:**
+- Each project can have different versions of the same dependency
+- MCP server stays clean and stable
+- User venv provides a default environment for user-space scripts
+
 ## The `project_path` Parameter
 
-**Important for MCP usage**: Since the MCP server runs as a separate process (not in your project directory), you must pass `project_path` to find scripts in your project's `.ai/scripts/` folder.
+**Important for MCP usage**: Since the MCP server runs as a separate process (not in your project directory), you must pass `project_path` to find scripts in your project's `.ai/scripts/` folder and use the project's isolated venv.
 
 ```json
 {

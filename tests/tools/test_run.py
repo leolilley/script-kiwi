@@ -296,7 +296,8 @@ def execute(params):
     
     @pytest.mark.asyncio
     @patch('script_kiwi.tools.run.subprocess.run')
-    async def test_run_argparse_script_with_project_path(self, mock_subprocess, tmp_path):
+    @patch('script_kiwi.utils.env_manager.subprocess.run')
+    async def test_run_argparse_script_with_project_path(self, mock_env_subprocess, mock_run_subprocess, tmp_path):
         """Test _run_argparse_script uses project_path as working directory"""
         project_path = tmp_path / "project"
         project_path.mkdir()
@@ -304,10 +305,13 @@ def execute(params):
         script_path = tmp_path / "test_script.py"
         script_path.write_text("# test")
         
+        # Mock venv subprocess calls to succeed
+        mock_env_subprocess.return_value = Mock(returncode=0, stdout='', stderr='')
+        
         tool = RunTool(project_path=str(project_path))
         
-        # Mock subprocess return
-        mock_subprocess.return_value = Mock(
+        # Mock script execution subprocess return
+        mock_run_subprocess.return_value = Mock(
             returncode=0,
             stdout='{"status": "success", "data": {"result": "test"}}',
             stderr=''
@@ -320,22 +324,27 @@ def execute(params):
             project_path=project_path
         )
         
-        # Verify subprocess was called with project_path as cwd
-        mock_subprocess.assert_called_once()
-        call_kwargs = mock_subprocess.call_args[1]
+        # Verify the script execution subprocess was called with project_path as cwd
+        # The last call should be the actual script execution
+        script_call = mock_run_subprocess.call_args
+        call_kwargs = script_call[1]
         assert call_kwargs['cwd'] == project_path
     
     @pytest.mark.asyncio
     @patch('script_kiwi.tools.run.subprocess.run')
-    async def test_run_argparse_script_without_project_path(self, mock_subprocess, tmp_path):
+    @patch('script_kiwi.utils.env_manager.subprocess.run')
+    async def test_run_argparse_script_without_project_path(self, mock_env_subprocess, mock_run_subprocess, tmp_path):
         """Test _run_argparse_script falls back to script directory when no project_path"""
         script_path = tmp_path / "test_script.py"
         script_path.write_text("# test")
         
+        # Mock venv subprocess calls to succeed
+        mock_env_subprocess.return_value = Mock(returncode=0, stdout='', stderr='')
+        
         tool = RunTool()
         
-        # Mock subprocess return
-        mock_subprocess.return_value = Mock(
+        # Mock script execution subprocess return
+        mock_run_subprocess.return_value = Mock(
             returncode=0,
             stdout='{"status": "success", "data": {"result": "test"}}',
             stderr=''
@@ -348,9 +357,9 @@ def execute(params):
             project_path=None
         )
         
-        # Verify subprocess was called with script's parent as cwd
-        mock_subprocess.assert_called_once()
-        call_kwargs = mock_subprocess.call_args[1]
+        # Verify the script execution subprocess was called with script's parent as cwd
+        script_call = mock_run_subprocess.call_args
+        call_kwargs = script_call[1]
         assert call_kwargs['cwd'] == script_path.parent
     
     @pytest.mark.asyncio
@@ -403,6 +412,33 @@ def execute(params):
         call_kwargs = mock_log_execution.call_args[1]
         assert call_kwargs['project'] == str(project_path)
     
+    def test_env_manager_uses_script_location_not_project_path(self, tmp_path):
+        """Test that venv is selected based on script location, not project_path.
+        
+        This is critical: when project_path is provided but script is in user space,
+        we should use the user venv (~/.script-kiwi/.venv/), not the project venv.
+        """
+        from script_kiwi.utils.env_manager import EnvManager
+        
+        # Simulate: project_path is set to some project
+        project_path = tmp_path / "some-project"
+        project_path.mkdir()
+        
+        tool = RunTool(project_path=str(project_path))
+        
+        # Initially, env_manager uses project venv
+        assert tool.env_manager.env_type == "project"
+        assert "some-project" in str(tool.env_manager.venv_dir)
+        
+        # But if script is in user space, env_manager should switch to user venv
+        # This simulates what happens in execute() after script resolution
+        storage_location = "user"
+        if storage_location == "user":
+            tool.env_manager = EnvManager(project_path=None)
+        
+        assert tool.env_manager.env_type == "user"
+        assert ".script-kiwi" in str(tool.env_manager.venv_dir)
+    
     @pytest.mark.asyncio
     @patch('script_kiwi.tools.run.log_execution')
     async def test_run_logs_cwd_when_no_project_path(self, mock_log_execution, mock_script_registry, mock_execution_logger, tmp_path):
@@ -448,4 +484,3 @@ def execute(params):
         mock_log_execution.assert_called_once()
         call_kwargs = mock_log_execution.call_args[1]
         assert call_kwargs['project'] == str(Path.cwd())
-

@@ -15,6 +15,7 @@ from datetime import datetime
 from ..api.script_registry import ScriptRegistry
 from ..api.execution_logger import ExecutionLogger
 from ..utils.script_resolver import ScriptResolver
+from ..utils.env_manager import EnvManager
 from ..utils.shared.preflight import run_preflight
 from ..utils.analytics import log_execution
 
@@ -127,6 +128,10 @@ class RunTool:
         self.resolver = ScriptResolver(
             project_root=self.project_path, registry_client=self.registry
         )
+        # Environment manager handles venv creation and package installation
+        # Uses project venv at .ai/scripts/.venv/ if project_path provided
+        # Otherwise uses user venv at ~/.script-kiwi/.venv/
+        self.env_manager = EnvManager(project_path=self.project_path)
 
     def _build_search_paths(self, script_path: Path, storage_location: str) -> list[Path]:
         """
@@ -239,7 +244,10 @@ class RunTool:
 
     def _check_pip_dependencies(self, dependencies: List[Dict[str, str]]) -> List[Dict[str, Any]]:
         """
-        Check which pip dependencies are missing.
+        Check which pip dependencies are missing from the target venv.
+
+        Uses EnvManager to run import checks in the actual venv Python,
+        ensuring accurate results for project or user environment.
 
         Args:
             dependencies: List of dependency dicts with 'name' and optional 'version'
@@ -247,55 +255,18 @@ class RunTool:
         Returns:
             List of missing dependencies with install commands
         """
-        # Import the mapping for package name to module name conversion
-        from ..utils.script_metadata import PACKAGE_TO_MODULE
-
         # Validate dependencies first
         validated_deps = self._validate_dependencies(dependencies)
 
-        # Internal modules to skip (not pip packages)
-        internal_prefixes = ("lib", "lib.")
-
-        missing = []
-        for dep in validated_deps:
-            dep_name = dep.get("name") if isinstance(dep, dict) else str(dep)
-            dep_version = dep.get("version") if isinstance(dep, dict) else None
-
-            # Skip internal lib modules (handled by script-kiwi, not pip)
-            if dep_name.startswith(internal_prefixes):
-                continue
-
-            # Convert package name to module name for import check
-            # First check PACKAGE_TO_MODULE mapping (e.g., GitPython -> git)
-            # Then fall back to simple hyphen-to-underscore conversion
-            module_name = PACKAGE_TO_MODULE.get(dep_name, dep_name.replace("-", "_"))
-
-            try:
-                __import__(module_name)
-            except ImportError:
-                # Also try the original name (some packages use hyphens in module names)
-                try:
-                    __import__(dep_name)
-                except ImportError:
-                    install_cmd = (
-                        f"pip install '{dep_name}{dep_version}'"
-                        if dep_version
-                        else f"pip install '{dep_name}'"
-                    )
-                    missing.append(
-                        {
-                            "name": dep_name,
-                            "version": dep_version,
-                            "module": module_name,
-                            "install_cmd": install_cmd,
-                        }
-                    )
-
-        return missing
+        # Use EnvManager to check packages in the target venv
+        return self.env_manager.check_packages(validated_deps)
 
     def _install_pip_dependencies(self, packages: List[Dict[str, str]]) -> Dict[str, Any]:
         """
-        Install multiple pip packages at once.
+        Install multiple pip packages into the target venv.
+
+        Uses EnvManager to install packages into project or user venv,
+        keeping the MCP server's Python clean.
 
         Args:
             packages: List of package dicts with 'name' and optional 'version'
@@ -309,42 +280,14 @@ class RunTool:
         # Validate packages first
         validated_packages = self._validate_dependencies(packages)
 
-        installed = []
-        failed = []
+        # Log which environment we're installing to
+        env_info = self.env_manager.get_info()
+        logger.info(
+            f"Installing {len(validated_packages)} packages into {env_info['env_type']} venv at {env_info['venv_dir']}"
+        )
 
-        for pkg in validated_packages:
-            pkg_name = pkg.get("name")
-            pkg_version = pkg.get("version")
-
-            try:
-                package_spec = f"{pkg_name}{pkg_version}" if pkg_version else pkg_name
-                logger.info(f"Installing: {package_spec}")
-
-                result = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", package_spec],
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                )
-
-                if result.returncode == 0:
-                    installed.append({"name": pkg_name, "version": pkg_version})
-                    logger.info(f"Installed: {package_spec}")
-                else:
-                    error_msg = result.stderr[:200] if result.stderr else "Unknown error"
-                    failed.append({"name": pkg_name, "error": error_msg})
-                    logger.warning(f"Failed to install {package_spec}: {error_msg}")
-
-            except subprocess.TimeoutExpired:
-                failed.append({"name": pkg_name, "error": "Installation timed out"})
-            except Exception as e:
-                failed.append({"name": pkg_name, "error": str(e)})
-
-        return {
-            "status": "success" if not failed else "partial" if installed else "error",
-            "installed": installed,
-            "failed": failed,
-        }
+        # Use EnvManager to install packages into the target venv
+        return self.env_manager.install_packages(validated_packages)
 
     async def _verify_lib_dependencies(self, script_name: str, required_libs: list[str]) -> dict:
         """Verify all required libraries are available."""
@@ -537,11 +480,13 @@ class RunTool:
         Run a script that uses argparse by executing it as a subprocess.
 
         Converts parameter dict to command-line arguments.
+        Uses the venv Python to ensure scripts have access to installed dependencies.
         """
         import shlex
 
-        # Build command
-        cmd = [sys.executable, str(script_path.absolute())]
+        # Use venv Python instead of sys.executable to run in isolated environment
+        venv_python = self.env_manager.get_python()
+        cmd = [venv_python, str(script_path.absolute())]
 
         # Convert params dict to command-line args
         # Handle common patterns: video_url -> --video-url, search_term -> --search-term
@@ -592,14 +537,11 @@ class RunTool:
         # Debug: Log the command being executed
         logger.debug(f"Executing argparse script with command: {' '.join(cmd)}")
         logger.debug(f"Script params: {script_params}")
+        logger.debug(f"Using venv: {self.env_manager.get_info()}")
 
-        # Set PYTHONPATH to include search paths
-        env = dict(os.environ)
-        pythonpath = ":".join(str(p.absolute()) for p in search_paths)
-        if env.get("PYTHONPATH"):
-            env["PYTHONPATH"] = f"{pythonpath}:{env['PYTHONPATH']}"
-        else:
-            env["PYTHONPATH"] = pythonpath
+        # Build subprocess environment with venv activation and PYTHONPATH
+        # This ensures the script runs with the correct venv and can import from lib/
+        env = self.env_manager.build_subprocess_env(search_paths)
 
         # Determine working directory for subprocess
         # Use project_path if provided, otherwise fall back to script's directory
@@ -1274,6 +1216,17 @@ class RunTool:
             # Build execution context with proper import paths
             script_path = Path(resolved["path"])
             storage_location = resolved["location"]  # ✅ Use "location" not "tier"
+
+            # CRITICAL: Update env_manager based on script location, not project_path
+            # If script is in user space, use user venv (even if project_path was provided)
+            # If script is in project space, use project venv
+            if storage_location == "user":
+                # Script is in ~/.script-kiwi/scripts/ - use user venv
+                self.env_manager = EnvManager(project_path=None)
+            elif storage_location == "project" and self.project_path:
+                # Script is in .ai/scripts/ - use project venv
+                self.env_manager = EnvManager(project_path=self.project_path)
+            # else: keep existing env_manager (fallback)
 
             # Build sys.path for this execution
             search_paths = self._build_search_paths(script_path, storage_location)
